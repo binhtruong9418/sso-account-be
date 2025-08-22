@@ -4,11 +4,16 @@ import {AppRole} from "../core/types/types";
 import {BadRequestError} from "../app.error";
 import * as crypto from "crypto";
 import {getRedisClient} from "../core/helpers/utils";
+import { OAuth2Client } from 'google-auth-library'
 
 export class AuthService {
     private static instance: AuthService;
+    private readonly googleClient: OAuth2Client;
     private constructor() {
-        // Private constructor to prevent instantiation
+        this.googleClient = new OAuth2Client(
+            process.env.GOOGLE_CLIENT_ID,
+            process.env.GOOGLE_CLIENT_SECRET
+        );
     }
 
     public static getInstance(): AuthService {
@@ -249,6 +254,95 @@ export class AuthService {
                 id: user.id,
                 email: user.email,
                 role: user.role,
+            },
+        };
+    }
+
+    async loginWithGoogle(body: {tokenId: string}) {
+        const db = await initORM();
+        const { tokenId } = body;
+        if(!tokenId) {
+            throw new BadRequestError("Google credential is required");
+        }
+
+        const ticket = await this.googleClient.verifyIdToken({
+            idToken: tokenId,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+
+        const payload = ticket.getPayload()
+
+
+        if (!payload || !payload.email) {
+            throw new BadRequestError("Invalid Google credential");
+        }
+
+        if(!payload.email_verified) {
+            throw new BadRequestError("Google account email is not verified");
+        }
+
+        const user = await db.user.findOne({
+            email: payload.email.toLowerCase(),
+        })
+
+        if (user) {
+            const jwtToken = jwt.sign(
+                {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role,
+                },
+                process.env.JWT_SECRET!,
+                {
+                    expiresIn: 24 * 60 * 60 * 7, // 7 days
+                }
+            );
+
+            return {
+                accessToken: jwtToken,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role,
+                },
+            };
+        }
+
+        const hashedPassword = await Bun.password.hash("123456", "bcrypt");
+
+        const newUser = db.user.create({
+            email: payload.email.toLowerCase(),
+            role: AppRole.USER,
+            password: hashedPassword,
+        });
+
+        await db.em.persistAndFlush(newUser);
+        const userProfile = db.userProfile.create({
+            fullName: payload.name?.trim(),
+            avatarUrl: payload.picture,
+            userId: newUser.id,
+        });
+
+        await db.em.persistAndFlush(userProfile);
+
+        const jwtToken = jwt.sign(
+            {
+                id: newUser.id,
+                email: newUser.email,
+                role: newUser.role,
+            },
+            process.env.JWT_SECRET!,
+            {
+                expiresIn: 24 * 60 * 60 * 7, // 7 days
+            }
+        );
+
+        return {
+            accessToken: jwtToken,
+            user: {
+                id: newUser.id,
+                email: newUser.email,
+                role: newUser.role,
             },
         };
     }

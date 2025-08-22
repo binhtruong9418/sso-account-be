@@ -4,14 +4,14 @@ import {AuthService} from "../services/auth.service";
 
 const authService = AuthService.getInstance();
 const authController: Elysia = new Elysia()
-    .group("/users", group =>
+    .group("/auth", group =>
         group
             .use(authMacro)
             .post("/register", async ({body}) => {
                 return await authService.register(body)
             }, {
                 detail: {
-                    tags: ["User"],
+                    tags: ["Auth"],
                 },
                 body: t.Object({
                     email: t.String(),
@@ -22,7 +22,7 @@ const authController: Elysia = new Elysia()
                 return await authService.processLogin(body, query);
             }, {
                 detail: {
-                    tags: ["User"],
+                    tags: ["Auth"],
                 },
                 body: t.Object({
                     email: t.String(),
@@ -38,7 +38,7 @@ const authController: Elysia = new Elysia()
             }, {
                 checkAuth: ["user"],
                 detail: {
-                    tags: ["User"],
+                    tags: ["Auth"],
                     security: [
                         {JwtAuth: []}
                     ],
@@ -48,11 +48,21 @@ const authController: Elysia = new Elysia()
                     scope: t.Optional(t.String()),
                 })
             })
+            .post("/login/google", async ({body}) => {
+                return await authService.loginWithGoogle(body);
+            }, {
+                detail: {
+                    tags: ["Auth"],
+                },
+                body: t.Object({
+                    tokenId: t.String(),
+                })
+            })
             .post("/token", async ({body}) => {
                 return await authService.exchangeCodeForToken(body.code, body.clientId, body.clientSecret);
             }, {
                 detail: {
-                    tags: ["User"],
+                    tags: ["Auth"],
                 },
                 body: t.Object({
                     code: t.String(),
