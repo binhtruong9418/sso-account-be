@@ -58,6 +58,16 @@ const authController: Elysia = new Elysia()
                     tokenId: t.String(),
                 })
             })
+            .post("/login/github", async ({body}) => {
+                return await authService.loginWithGithub(body);
+            }, {
+                detail: {
+                    tags: ["Auth"],
+                },
+                body: t.Object({
+                    code: t.String(),
+                })
+            })
             .post("/token", async ({body}) => {
                 return await authService.exchangeCodeForToken(body.code, body.clientId, body.clientSecret);
             }, {

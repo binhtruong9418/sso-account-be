@@ -346,4 +346,123 @@ export class AuthService {
             },
         };
     }
+
+    async loginWithGithub(body: {code: string}) {
+        const db = await initORM();
+        const { code } = body;
+
+        if (!code) {
+            throw new BadRequestError("GitHub authorization code is required");
+        }
+
+        const tokenResponse = await fetch(`https://github.com/login/oauth/access_token`, {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                client_id: process.env.GITHUB_CLIENT_ID,
+                client_secret: process.env.GITHUB_CLIENT_SECRET,
+                code: code,
+            }),
+        })
+
+        const tokenData = await tokenResponse.json();
+        console.log(tokenData)
+        const accessToken = tokenData.access_token;
+
+        if (!accessToken) {
+            throw new BadRequestError("Failed to retrieve access token from GitHub");
+        }
+
+        const userResponse = await fetch(`https://api.github.com/user`, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json',
+            }
+        })
+
+        const userData = await userResponse.json();
+
+        const emailsResponse = await fetch(`https://api.github.com/user/emails`, {
+            headers: {
+                'Authorization': `Bearer ${accessToken}`,
+                'Accept': 'application/json',
+            }
+        });
+
+        const emailsData = await emailsResponse.json();
+
+        const primaryEmail = emailsData.find((email: { primary: boolean }) => email.primary)?.email;
+
+        if (!userData || !primaryEmail) {
+            throw new BadRequestError("Failed to retrieve user data from GitHub");
+        }
+
+        const user = await db.user.findOne({
+            email: primaryEmail.toLowerCase(),
+        });
+
+        if (user) {
+            const jwtToken = jwt.sign(
+                {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role,
+                },
+                process.env.JWT_SECRET!,
+                {
+                    expiresIn: 24 * 60 * 60 * 7, // 7 days
+                }
+            );
+
+            return {
+                accessToken: jwtToken,
+                user: {
+                    id: user.id,
+                    email: user.email,
+                    role: user.role,
+                },
+            };
+        }
+
+        const hashedPassword = await Bun.password.hash("123456", "bcrypt");
+        const newUser = db.user.create({
+            email: userData.email.toLowerCase(),
+            role: AppRole.USER,
+            password: hashedPassword,
+        });
+
+        await db.em.persistAndFlush(newUser);
+
+        const userProfile = db.userProfile.create({
+            fullName: userData.name?.trim(),
+            avatarUrl: userData.avatar_url,
+            userId: newUser.id,
+        });
+
+        await db.em.persistAndFlush(userProfile);
+
+        const jwtToken = jwt.sign(
+            {
+                id: newUser.id,
+                email: newUser.email,
+                role: newUser.role,
+            },
+            process.env.JWT_SECRET!,
+            {
+                expiresIn: 24 * 60 * 60 * 7, // 7 days
+            }
+        );
+
+        return {
+            accessToken: jwtToken,
+            user: {
+                id: newUser.id,
+                email: newUser.email,
+                role: newUser.role,
+            },
+        };
+    }
 }
